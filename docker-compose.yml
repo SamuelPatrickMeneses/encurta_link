@@ -1,0 +1,149 @@
+name: encurta-link
+
+x-app-build: &app-build
+  context: .
+  dockerfile: Dockerfile
+  target: runtime
+
+x-app-environment: &app-environment
+  APP_NAME: ${APP_NAME:-EncurtaLink}
+  APP_ENV: ${APP_ENV:-production}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  APP_URL: ${APP_URL:-http://localhost}
+  APP_KEY: ${APP_KEY:-}
+  LOG_CHANNEL: ${LOG_CHANNEL:-stack}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DB_CONNECTION: mysql
+  DB_HOST: db
+  DB_PORT: 3306
+  DB_DATABASE: ${DB_DATABASE:-encurta_link}
+  DB_USERNAME: ${DB_USERNAME:-app}
+  DB_PASSWORD: ${DB_PASSWORD:-password}
+  CACHE_STORE: redis
+  SESSION_DRIVER: redis
+  QUEUE_CONNECTION: redis
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-null}
+
+x-production-dependencies: &production-dependencies
+  db:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
+x-app-healthcheck: &app-healthcheck
+  test: ["CMD-SHELL", "php-fpm -t"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 20s
+
+x-web-healthcheck: &web-healthcheck
+  test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/up >/dev/null || exit 1"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 20s
+
+services:
+  app:
+    build: *app-build
+    image: encurta-link-app:${APP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment: *app-environment
+    volumes:
+      - storage_data:/var/www/html/storage
+    depends_on: *production-dependencies
+    healthcheck: *app-healthcheck
+    networks:
+      - encurta-link-network
+
+  queue:
+    build: *app-build
+    image: encurta-link-app:${APP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "--sleep=3", "--tries=3", "--max-time=3600"]
+    env_file:
+      - .env
+    environment: *app-environment
+    volumes:
+      - storage_data:/var/www/html/storage
+    depends_on: *production-dependencies
+    networks:
+      - encurta-link-network
+
+  scheduler:
+    build: *app-build
+    image: encurta-link-app:${APP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["sh", "-c", "while true; do php artisan schedule:run; sleep 60; done"]
+    env_file:
+      - .env
+    environment: *app-environment
+    volumes:
+      - storage_data:/var/www/html/storage
+    depends_on: *production-dependencies
+    networks:
+      - encurta-link-network
+
+  web:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    environment:
+      APP_HOST: app
+      NGINX_ENVSUBST_FILTER: APP_HOST
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck: *web-healthcheck
+    networks:
+      - encurta-link-network
+
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-password}
+      MYSQL_DATABASE: ${DB_DATABASE:-encurta_link}
+      MYSQL_USER: ${DB_USERNAME:-app}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-password}
+      MYSQL_ROOT_HOST: "%"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - encurta-link-network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - encurta-link-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+networks:
+  encurta-link-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  storage_data:
