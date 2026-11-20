@@ -45,8 +45,16 @@ RUN apk add --no-cache \
     libzip-dev \
     linux-headers \
     oniguruma-dev \
+    $PHPIZE_DEPS \
     && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
-    && docker-php-ext-install -j1 bcmath gd intl pcntl pdo_mysql zip
+    && docker-php-ext-install -j1 bcmath gd intl pcntl pdo_mysql zip \
+    # 6.x é obrigatório: a partir do PHP 8.4 a smart_str saiu do core e o
+    # phpredis 5.x deixa de compilar (php_smart_string.h inexistente).
+    # A 6.x também muda a assinatura de FCALL para arrays e passa a devolver
+    # `false` + getLastError() em vez de lançar excepções.
+    && pecl install redis-6.3.0 \
+    && docker-php-ext-enable redis \
+    && apk del $PHPIZE_DEPS
 
 WORKDIR /var/www/html
 

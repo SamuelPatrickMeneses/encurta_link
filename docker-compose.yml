@@ -20,7 +20,7 @@ x-app-environment: &app-environment
   DB_USERNAME: ${DB_USERNAME:-app}
   DB_PASSWORD: ${DB_PASSWORD:-password}
   CACHE_STORE: redis
-  SESSION_DRIVER: redis
+  SESSION_DRIVER: file
   QUEUE_CONNECTION: redis
   REDIS_HOST: redis
   REDIS_PORT: 6379
@@ -127,9 +127,14 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    # Carrega a Redis Function `gerar_slug` a cada arranque, a partir do
+    # ficheiro montado. Sem isto, o AOF devolveria a versão da biblioteca que
+    # foi carregada no último arranque, e um volume novo ficaria sem função.
+    command: ["sh", "/etc/redis/start.sh", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
+      - ./docker/redis/encurtador.lua:/etc/redis/encurtador.lua:ro
+      - ./docker/redis/start.sh:/etc/redis/start.sh:ro
     networks:
       - encurta-link-network
     healthcheck:

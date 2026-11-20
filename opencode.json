@@ -1,0 +1,35 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "lsp": true,
+    "mcp": {
+    "github": {
+      "command": [
+        "docker",
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "-e",
+        "GITHUB_HOST",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "type": "local",
+      "enabled": true,
+      "environment": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "{env:ENCURTA_LINK_GITHUB_TOKEN}"
+      }
+    }
+  },
+  "permissions": [
+    { "action": "github_push_files", "resource": "*", "effect": "deny" },
+    { "action": "github_create_or_update_file", "resource": "*", "effect": "deny" },
+    { "action": "github_delete_file", "resource": "*", "effect": "deny" },
+    { "action": "github_create_branch", "resource": "*", "effect": "deny" },
+    { "action": "github_create_repository", "resource": "*", "effect": "deny" },
+    { "action": "github_delete_repository", "resource": "*", "effect": "deny" },
+    { "action": "github_fork_repository", "resource": "*", "effect": "deny" },
+    { "action": "github_merge_pull_request", "resource": "*", "effect": "deny" },
+    { "action": "github_update_pull_request_branch", "resource": "*", "effect": "deny" }
+  ]
+}

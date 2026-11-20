@@ -1,0 +1,48 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    # Nível 10, o mais alto do PHPStan 2.x. Foi escolhido por medição, não por
+    # convenção: o código passou a este nível depois de corrigidos os problemas
+    # que ele próprio encontrou — um `rtrim()` sobre um `env()` que pode devolver
+    # booleano, um `assertTrue(true)` que não verificava nada, e property access
+    # e casts sobre valores `mixed` vindos de `config()` e de `xrange()`.
+    #
+    # Níveis mais altos que este não existem no PHPStan 2.x.
+    level: 10
+
+    # A mesma lista que o phpcs.xml usa. Mantê-las iguais evita que uma das
+    # ferramentas analise umdirectório que a outra ignora em silêncio.
+    paths:
+        - app
+        - bootstrap
+        - config
+        - database
+        - routes
+        - tests
+
+    excludePaths:
+        # Gerado pelo Composer e pelo Laravel; versionado por accidento, nunca
+        # analisado de propósito.
+        - bootstrap/cache
+
+    ignoreErrors:
+        # Duas chamadas que existem mesmo, mas que o Larastan não consegue ver.
+        # Não são mascaradas por-path: a permissão é pelo método, para que um
+        # `executeRaw()` novo noutro ficheiro continue a ser aceite e um
+        # `executeRawTypo()` continue a ser erro.
+        #
+        # `executeRaw` é um método real de `PhpRedisConnection`
+        # (Illuminate/Redis/Connections/PhpRedisConnection.php). A facade
+        # `Redis` só publica no seu bloco `@method` o que o gerador de docblocks
+        # do Laravel conhece, e `FUNCTION LOAD` e `KEYS` — que não existem como
+        # comandos phpredis — não lá estão. O Larastan lê a lista e concludes
+        # que o método não existe. O mesmo vale para `shouldNotReceive`, que vem
+        # do Mockery através de `Facade::__callStatic` quando a facade está
+        # mockada.
+        -
+            identifier: staticMethod.notFound
+            message: '#Call to an undefined static method .*Redis::executeRaw\(\)#'
+        -
+            identifier: staticMethod.notFound
+            message: '#Call to an undefined static method .*Redis::shouldNotReceive\(\)#'

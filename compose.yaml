@@ -53,11 +53,17 @@ services:
             retries: 3
             timeout: 5s
     redis:
-        image: 'redis:alpine'
+        image: 'redis:7-alpine'
+        # Carrega a Redis Function `gerar_slug` a cada arranque. Sem este
+        # script, um volume já existente continua a servir a versão da
+        # biblioteca que o AOF guardou, e um volume novo não a tem de todo.
+        command: ['sh', '/etc/redis/start.sh']
         ports:
             - '${FORWARD_REDIS_PORT:-6379}:6379'
         volumes:
             - 'sail-redis:/data'
+            - './docker/redis/encurtador.lua:/etc/redis/encurtador.lua:ro'
+            - './docker/redis/start.sh:/etc/redis/start.sh:ro'
         networks:
             - sail
         healthcheck:

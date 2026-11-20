@@ -1,0 +1,101 @@
+name: CI
+
+# GitFlow: os ramos permanentes e os que precedem uma tag. `pull_request` cobre
+# as feature branches sem as listar, e um `push` sem filtro correria também em
+# ramos de trabalho descartáveis.
+on:
+  push:
+    branches: [main, develop, 'release/**', 'hotfix/**']
+  pull_request:
+
+# O cancelamento evita gastar minutos a correr uma análise estática sobre um
+# commit que já foi substituído por outro.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualidade:
+    name: Estilo, análise estática e testes
+    runs-on: ubuntu-latest
+
+    services:
+      # MySQL 8.4 e não uma imagem genérica: `links.slug` depende de
+      # `utf8mb4_0900_as_cs`, que não existe em MySQL 5.7 nem em MariaDB. Com
+      # outra versão, `LinksSlugCollationTest` saltava em silêncio e o CI
+      # ficava verde sem verificar a decisão que sustenta o base 62.
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testing
+          MYSQL_USER: app
+          MYSQL_PASSWORD: secret
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+      # Redis 7 é o mínimo para Redis Functions. Este serviço não carrega a
+      # biblioteca: contentores de serviço do GitHub Actions não aceitam volumes,
+      # e por isso o `setUp` da suite de integração carrega-a ela própria.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    # Credenciais de ambiente descartável, só existindo no runner. O que a
+    # suíte precisa de mais — REDIS_DB, REDIS_PREFIX, APP_ENV — está em
+    # `phpunit.xml`, que é versionado e ilegível para quem não tem o repositório.
+    env:
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: testing
+      DB_USERNAME: app
+      DB_PASSWORD: secret
+      REDIS_CLIENT: phpredis
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+
+    steps:
+      - name: Obter o código
+        uses: actions/checkout@v4
+
+      - name: Configurar o PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          # A mesma versão do `Dockerfile` (`php:8.5-fpm-alpine`). Analisar com
+          # uma versão diferente da de produção daria resultados que não valem
+          # para a aplicação que vai correr.
+          php-version: '8.5'
+          # `redis` é o phpredis 6.x, o mesmo que o `Dockerfile` compila: a
+          # partir do PHP 8.4 o phpredis 5.x nem compila, e a assinatura de
+          # FCALL difere entre as duas séries.
+          extensions: pdo_mysql, redis
+          ini-values: memory_limit=-1
+          coverage: none
+
+      - name: Instalar dependências
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      # Por esta ordem: o phpcs é o mais rápido a falhar, o PHPStan o segundo, e
+      # o PHPUnit o mais lento porque tem de aplicar as migrações. Quem espera
+      # pelo fim do pipeline para ver um erro de espaçamento está a perder
+      # minutos.
+      - name: Estilo (PSR-12)
+        run: vendor/bin/phpcs
+
+      - name: Análise estática (PHPStan, nível 10)
+        run: vendor/bin/phpstan analyse --no-progress
+
+      - name: Testes
+        run: vendor/bin/phpunit

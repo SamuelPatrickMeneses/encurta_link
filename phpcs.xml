@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<ruleset name="EncurtaLink">
+    <description>
+        PSR-12 estricto, sem exclusoes.
+
+        O phpcbf e a unica autoridade de formatacao do projecto. O Pint foi
+        removido precisamente porque as duas ferramentas se contradiziam: o preset
+        `laravel` do Pint remove o espaco em volta do `.` e o PSR-12 exige-o, o
+        que fazia os formatadores reescreverem o trabalho um do outro. Com o Pint
+        fora, nao ha segunda opiniao a oscilar.
+
+        Nao ha exclusoes de sniffs. Os nomes dos metodos de teste em `snake_case`
+        que a suite usava violam `PSR1.Methods.CamelCapsMethodName` e foram
+        renomeados para camelCase.
+    </description>
+
+    <file>app</file>
+    <file>bootstrap</file>
+    <file>config</file>
+    <file>database</file>
+    <file>routes</file>
+    <file>tests</file>
+
+    <!-- Gerado pelo Composer e pelo Laravel, nunca versionado como codigo. -->
+    <exclude-pattern>*/bootstrap/cache/*</exclude-pattern>
+    <exclude-pattern>*/node_modules/*</exclude-pattern>
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+
+    <!-- Caminhos relativos nos relatorios, para o output ser clicavel. -->
+    <arg name="basepath" value="."/>
+    <arg name="colors"/>
+    <arg value="sp"/>
+
+    <rule ref="PSR12"/>
+</ruleset>

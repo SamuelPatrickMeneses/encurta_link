@@ -5,9 +5,17 @@
          colors="true"
 >
     <testsuites>
-        <testsuite name="Unit">
-            <directory>tests/Unit</directory>
-        </testsuite>
+        <!--
+            Só existe a suite Feature. A suite Unit do esqueleto do Laravel
+            continha um `assertTrue(true)` que não verificava nada, e o PHPStan
+            de nível máximo aponta-o como tautologia — daí ter sido removida em
+            vez de silenciada.
+
+            Manter cada directório listado à mão, e não um `<directory>tests</directory>`
+            único, é deliberado: um directório novo que não seja registado aqui
+            faz o PHPUnit falhar com "directory not found", que se vê, em vez de
+            correr menos do que se pensa sem dizer nada.
+        -->
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
@@ -19,6 +27,7 @@
     </source>
     <php>
         <env name="APP_ENV" value="testing"/>
+        <env name="APP_KEY" value="base64:8G3ZCeEv7KgpeDFT/sqR2ekIi0m5QSHwNoAG9fpfQKw="/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
@@ -27,6 +36,8 @@
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="REDIS_DB" value="1"/>
+        <env name="REDIS_PREFIX" value="encurta-link-testing-"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
