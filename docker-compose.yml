@@ -79,7 +79,7 @@ services:
     build: *app-build
     image: encurta-link-app:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
-    command: ["sh", "-c", "while true; do php artisan schedule:run; sleep 60; done"]
+    command: ["php", "artisan", "schedule:work"]
     env_file:
       - .env
     environment: *app-environment
