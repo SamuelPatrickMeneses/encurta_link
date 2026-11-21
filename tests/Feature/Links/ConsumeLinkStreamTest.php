@@ -127,6 +127,36 @@ class ConsumeLinkStreamTest extends TestCase
         $this->assertSame(0, $consumer->consumeBatch(10, 1));
     }
 
+    public function testEntradasConfirmadasSaoRemovidasDoStream(): void
+    {
+        $this->addStreamEntry('saiu1', 'https://a.pt');
+        $this->addStreamEntry('saiu2', 'https://b.pt');
+
+        $this->consumeOnce();
+
+        $this->assertSame(0, Redis::xlen('encurtador:fila'));
+    }
+
+    public function testEntradasHistoricasConfirmadasSaoRemovidas(): void
+    {
+        Redis::xgroup('CREATE', 'encurtador:fila', 'links', '0', true);
+
+        $antigo1 = $this->addStreamEntry('anti1', 'https://a.pt');
+        $antigo2 = $this->addStreamEntry('anti2', 'https://b.pt');
+
+        $lidas = Redis::xreadgroup('links', 'antigo', ['encurtador:fila' => '>'], 10, 1);
+
+        $this->assertIsArray($lidas);
+
+        Redis::xack('encurtador:fila', 'links', [$antigo1, $antigo2]);
+
+        $this->addStreamEntry('novo1', 'https://c.pt');
+
+        $this->consumeOnce();
+
+        $this->assertSame(0, Redis::xlen('encurtador:fila'));
+    }
+
     public function testMaximoInvalidoFalhaSemConsumir(): void
     {
         config()->set('links.stream.max_records', 0);

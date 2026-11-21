@@ -27,6 +27,10 @@ final class LinkService
 
     private const CACHE_TTL = 86400;
 
+    public function __construct(private readonly LinkStreamReader $streamReader)
+    {
+    }
+
     /**
      * Reserva um slug e põe a link na fila, numa única chamada ao Redis.
      *
@@ -128,7 +132,7 @@ final class LinkService
     }
 
     /**
-     * Resolve um slug, pelo cache primeiro e pelo MySQL em caso de falha.
+     * Resolve um slug pelo cache, pelo stream de pendentes e pelo MySQL.
      *
      * Devolve a entidade quando o `id` é conhecido, e um DTO enquanto a criação
      * ainda não estiver confirmada.
@@ -146,6 +150,16 @@ final class LinkService
             }
 
             return $cached;
+        }
+
+        $pending = $this->streamReader->findBySlug($slug);
+
+        if ($pending instanceof LinkDTO) {
+            if ($pending->isExpired()) {
+                throw LinkExpired::forSlug($slug, $pending->expiresAt);
+            }
+
+            return $pending;
         }
 
         $link = Link::query()->where('slug', $slug)->first();

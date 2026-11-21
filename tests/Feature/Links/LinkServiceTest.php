@@ -155,6 +155,56 @@ class LinkServiceTest extends TestCase
         $this->assertSame($link->id, $resolved->id);
     }
 
+    public function testCacheMissComEntradaPendenteNoStreamDevolveLinkDTO(): void
+    {
+        $this->addStreamEntry('pend1', 'https://pendente.pt');
+
+        $resolved = app(LinkService::class)->findBySlug('pend1');
+
+        $this->assertInstanceOf(LinkDTO::class, $resolved);
+        $this->assertSame('https://pendente.pt', $resolved->url);
+    }
+
+    public function testEntradaPendenteNoStreamTemPrioridadeSobreOMySQL(): void
+    {
+        $this->link('prior', 'https://mysql.pt', 7);
+        $this->addStreamEntry('prior', 'https://stream.pt');
+
+        $resolved = app(LinkService::class)->findBySlug('prior');
+
+        $this->assertInstanceOf(LinkDTO::class, $resolved);
+        $this->assertSame('https://stream.pt', $resolved->url);
+    }
+
+    public function testEntradaExpiradaNoStreamLancaLinkExpired(): void
+    {
+        $this->addStreamEntry('velho', 'https://expirado.pt', now()->subHour()->getTimestamp());
+
+        $this->expectException(LinkExpired::class);
+
+        app(LinkService::class)->findBySlug('velho');
+    }
+
+    public function testStreamSemOSlugNaoImpedeAConsultaAoMySQL(): void
+    {
+        $this->link('vind2', 'https://do-banco.pt', 7);
+        $this->addStreamEntry('outro', 'https://outro.pt');
+
+        $resolved = app(LinkService::class)->findBySlug('vind2');
+
+        $this->assertInstanceOf(Link::class, $resolved);
+        $this->assertSame('https://do-banco.pt', $resolved->original_url);
+    }
+
+    public function testAcertoNoStreamNaoRepovoaACache(): void
+    {
+        $this->addStreamEntry('pend2', 'https://pendente.pt');
+
+        app(LinkService::class)->findBySlug('pend2');
+
+        $this->assertNull(Redis::get('link:pend2'));
+    }
+
     public function testCacheHitNaoVoltaAoMySQL(): void
     {
         $link = $this->link('cache', 'https://do-cache.pt', 7);
@@ -420,5 +470,20 @@ class LinkServiceTest extends TestCase
             'user_id' => $userId,
             'expires_at' => $expiresAt,
         ]);
+    }
+
+    private function addStreamEntry(string $slug, string $url, ?int $exp = null): void
+    {
+        $fields = [
+            'url' => $url,
+            'slug' => $slug,
+            'usuario' => '',
+        ];
+
+        if ($exp !== null) {
+            $fields['exp'] = (string) $exp;
+        }
+
+        Redis::xadd('encurtador:fila', '*', $fields);
     }
 }
