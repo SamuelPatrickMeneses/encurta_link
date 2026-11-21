@@ -221,9 +221,10 @@ tratar como bug é real.
 **O `id` do valor cacheado é o que decide o tipo devolvido.** A cache guarda
 `{url, exp, id}`. Com `id`, `findBySlug()` devolve a entidade `Link` e `exists()` é
 verdadeiro, porque um `id` guardado implica linha já criada. Sem `id`, devolve um
-`LinkDTO` — é o caso do consumidor do STREAM, que escreve a cache na criação antes
+`LinkDTO` — é o caso da cache escrita pela função `gerar_slug` na criação, antes
 de a linha existir, e nesse intervalo o slug já responde mas ainda não há `id`.
-Ver «`findBySlug()` devolve `Link` ou `LinkDTO`».
+O mesmo DTO é devolvido quando a cache falha e a entrada é encontrada no stream
+pendente. Ver «`findBySlug()` devolve `Link` ou `LinkDTO`».
 
 ## A cache de slugs
 
@@ -248,9 +249,9 @@ e não compraria nada: o slug expirado volta ao MySQL a cada pedido, o que é o
 custo de um link morto.
 
 **Uma entrada de cache corrompida ou com formato inesperado é apagada e a
-resolução segue para o MySQL.** Sem isso, uma escrita errada envenenava todos os
-pedidos desse slug durante 24 horas, e nenhum deles chegaria ao MySQL para se
-repor.
+resolução segue para o stream e para o MySQL.** Sem isso, uma escrita errada
+envenenava todos os pedidos desse slug durante 24 horas, e nenhum deles chegaria
+às fontes seguintes para se repor.
 
 **A exclusão apaga a cache antes de apagar a linha.** Se o MySQL falhar a seguir,
 o link fica sem cache e a leitura seguinte repovoa-o. Ao contrário, apagar a linha
@@ -287,6 +288,33 @@ passaria a ter duas donas.
 aplicada à função ausente: uma falha de infraestrutura chega ao chamador com a
 mensagem do servidor, em vez de ser disfarçada por um caminho alternativo. Um
 Redis em baixo é visível; engolido, vira um MySQL lento sem ninguém a saber porquê.
+
+## A leitura garantida
+
+**A ordem é cache, stream de pendentes e MySQL.** A cache resolve o caminho
+quente. Se a chave for evictada antes de o consumidor correr, o stream ainda tem
+o registo criado pela função, e é isso que evita um 404 para um link que já foi
+reservado. O MySQL é o último recurso, para quando nem a cache nem o stream
+resolvem o slug.
+
+**O stream só guarda o que ainda não foi confirmado.** O consumidor faz `XACK` e
+`XDEL` do lote, e o `XTRIM` remove o histórico confirmado. Sem esta limpeza, a
+leitura encontraria sempre a entrada antiga no stream — o stream não esquece uma
+entrada só porque foi confirmada — e o MySQL nunca seria consultado para um link
+antigo com cache expirada. A entrada encontrada no stream devolve `LinkDTO`,
+porque a linha ainda pode não existir.
+
+**O limite do `XTRIM` é o último id entregue quando não há pendentes, ou o
+primeiro pendente quando há.** O primeiro caso remove tudo o que já foi
+confirmado e preserva as entradas ainda não lidas. O segundo nunca remove uma
+entrada que o consumidor ainda tem de confirmar. O preço é que uma entrada
+inválida deixada pendente pode conservar entradas confirmadas posteriores; a
+recuperação de pendentes e a dead-letter continuam em aberto.
+
+**A validação do registo vive em `LinkStreamEntry`.** O consumidor e o leitor de
+emergência aceitam o mesmo slug, a mesma URL, o mesmo `usuario` e o mesmo `exp`;
+duas cópias da validação divergiriam e uma delas passaria a aceitar um registo que
+a outra recusa.
 
 ## Nomenclatura
 
@@ -345,10 +373,11 @@ a clicks, e não pode.
 posse que está no fluxo 05 e em nenhum ficheiro. Enquanto não existir, nada impede
 um controller de chamar `delete()` com o id que lhe derem.
 
-**O consumidor do STREAM não existe.** Sem ele a criação é assíncrona só no papel,
-e o dashboard — que lista do MySQL — não mostra o link novo. O mesmo intervalo
-justifica o `LinkDTO`: entre a reserva e o consumidor a linha ainda não existe, e
-é por isso que a cache escrita na criação não tem `id`.
+**A recuperação de entradas pendentes ainda não existe.** O consumidor confirma e
+remove o lote, mas uma entrada inválida fica pendente e não há `XAUTOCLAIM` nem
+dead-letter. O `XTRIM` limita-se a não remover o primeiro pendente; entradas
+confirmadas posteriores a ele podem permanecer no stream até o pendente ser
+resolvido. É a lacuna que substitui a antiga «o consumidor do STREAM não existe».
 
 **O job de clique precisa de um `link_id` que ainda não é escrito.** Se chegar
 antes do consumidor, o `INSERT` em `clicks` falha por foreign key. Detalhe em

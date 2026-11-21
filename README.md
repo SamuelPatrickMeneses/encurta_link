@@ -106,10 +106,9 @@ A opção por sessão em arquivo atende ao ambiente single-container. Para escal
 ```text
 POST /links
   -> autenticação e validação
-  -> reserva de slug via Redis Function (FCALL)
-  -> persistência no MySQL
-  -> atualização do cache Redis
+  -> reserva de slug via Redis Function (FCALL), com XADD no stream e cache Redis
   -> retorno do partial Blade para o HTMX
+  -> consumidor projeta o stream no MySQL
 ```
 
 ### Fluxo de redirecionamento
@@ -117,7 +116,8 @@ POST /links
 ```text
 GET /r/{slug}
   -> busca no cache Redis
-  -> em caso de cache miss, consulta o MySQL
+  -> em caso de cache miss, procura o slug nas entradas pendentes do stream
+  -> em último recurso, consulta o MySQL
   -> verifica expiração
   -> registra o click via fila
   -> redirect()->away(url, 302)
@@ -169,7 +169,7 @@ Slugs são sequenciais em base 62 sobre `[0-9A-Za-z]`, com 4 a 10 caracteres, e 
 
 O slug é reservado por uma Redis Function Lua, `gerar_slug`, em `docker/redis/encurtador.lua`, executada por `FCALL`. O script faz `INCR` numa chave de contador, converte o resultado em base 62, e escreve o `XADD` na fila e o `SET` da cache `link:{slug}` na mesma execução atómica. É isso que faz o link responder a `/r/{slug}` assim que é criado, sem esperar pelo consumidor da fila.
 
-O MySQL continua a ser a fonte de verdade: a escrita em `links` pertence ao consumidor do STREAM, que ainda não existe. A cache escrita na criação não tem `id`, porque a linha ainda não existe — quem o acrescenta é a leitura ao MySQL, que reescreve a entrada. O TTL é calculado em PHP e chega à função em `ARGV` já feito, para que a regra `min(86400, segundos até expires_at)` viva num sítio só. O prefixo da chave da cache também chega completo, com o prefixo do phpredis incluído, porque a função é que constrói a chave e dentro do Lua o servidor não conhece o prefixo do cliente. As decisões estão em `docs/decisoes.md`.
+O MySQL continua a ser a fonte de verdade: a escrita em `links` pertence ao consumidor do STREAM, que confirma as entradas com `XACK` + `XDEL` e limpa o histórico com `XTRIM`. A cache escrita na criação não tem `id`, porque a linha ainda não existe — quem o acrescenta é a leitura ao MySQL, que reescreve a entrada. O TTL é calculado em PHP e chega à função em `ARGV` já feito, para que a regra `min(86400, segundos até expires_at)` viva num sítio só. O prefixo da chave da cache também chega completo, com o prefixo do phpredis incluído, porque a função é que constrói a chave e dentro do Lua o servidor não conhece o prefixo do cliente. As decisões estão em `docs/decisoes.md`.
 
 O alfabeto é `[0-9A-Za-z]` e o slug é sensível à caixa, em coerência com a collation `utf8mb4_0900_as_cs` de `links.slug`: com a collation insensível à caixa que o MySQL traz por omissão, `Ab3` e `ab3` colidiriam no índice único. O underscore e o hífen não são gerados. Como `62^3 = 238328` é o menor id cuja representação em base 62 tem quatro caracteres, a função reposiciona o contador nesse piso sempre que o encontra abaixo — um contador novo, de um volume novo, daria um slug de três caracteres.
 
@@ -412,7 +412,7 @@ A suíte usa PHPUnit 12 e está organizada em camadas. Para a Redis Function exi
 
 `tests/Feature/Database/LinksSlugCollationTest.php` guarda a decisão que sustenta o base 62: `links.slug` tem de ter collation `utf8mb4_0900_as_cs`, senão `Ab3` e `ab3` colidem no índice único e o gerador devolve slugs que o MySQL recusa. É ignorado fora do MySQL, e é por isso que o CI usa MySQL 8.4 — com outra versão, o teste que verifica esta decisão passaria a ser ignorado sem dizer nada.
 
-`tests/Feature/Links/LinkServiceTest.php` cobre a listagem, a exclusão e a resolução por slug contra o MySQL e o Redis reais. O contrato central — o cache primeiro, sem voltar ao MySQL num acerto — é provado apagando a linha depois de o cache estar povoado: se a resolução ainda responder, foi o cache que respondeu. `findBySlug()` devolve a entidade `Link` quando o acerto traz `id`, e um `LinkDTO` quando não traz, que é o intervalo entre a reserva e o consumidor da fila. Também fixa que o cache é autoritário até ser invalidado, que a entrada corrompida cai no MySQL, e que `%` e `_` na busca são literais.
+`tests/Feature/Links/LinkServiceTest.php` cobre a listagem, a exclusão e a resolução por slug contra o MySQL e o Redis reais. O contrato central — o cache primeiro, sem voltar ao MySQL num acerto — é provado apagando a linha depois de o cache estar povoado: se a resolução ainda responder, foi o cache que respondeu. `findBySlug()` devolve a entidade `Link` quando o acerto traz `id`, e um `LinkDTO` quando não traz, que é o intervalo entre a reserva e o consumidor da fila. Também fixa que uma cache miss procura primeiro no stream pendente, que o cache é autoritário até ser invalidado, que a entrada corrompida cai no stream e no MySQL, e que `%` e `_` na busca são literais.
 
 `phpunit.xml` isola a suite com `REDIS_DB=1` e `REDIS_PREFIX=encurta-link-testing-`, porque o `flushdb` do `setUp` apaga a base inteira e ignora o prefixo.
 
