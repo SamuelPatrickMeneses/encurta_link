@@ -354,6 +354,9 @@ REDIS_PREFIX=encurta-link-database-
 CACHE_STORE=redis
 SESSION_DRIVER=file
 QUEUE_CONNECTION=redis
+
+LINK_STREAM_MAX_RECORDS=200
+LINK_STREAM_CONSUME_INTERVAL_MINUTES=1
 ```
 
 O `docker-compose.yml` de produção sobrepõe os hosts de infraestrutura para `DB_HOST=db` e `REDIS_HOST=redis` durante o deploy. Nunca versionar `.env` ou inserir credenciais reais no repositório.
@@ -437,7 +440,7 @@ O restante da suíte deve cobrir, no mínimo:
 9. Agendar backup do volume `mysql_data`.
 10. Confirmar que as portas 3306 e 6379 não estão publicadas externamente.
 
-O build de produção executa `npm run build` durante a construção da imagem. O serviço `queue` executa `php artisan queue:work` e o serviço `scheduler` executa `schedule:run` em loop.
+O build de produção executa `npm run build` durante a construção da imagem. O serviço `queue` executa `php artisan queue:work` e o serviço `scheduler` executa `php artisan schedule:work`, que dispara `links:consume --once` a cada `LINK_STREAM_CONSUME_INTERVAL_MINUTES` minutos (1–59).
 
 ## Estrutura do repositório
 
