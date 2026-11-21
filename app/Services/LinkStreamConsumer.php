@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\DTOs\LinkStreamEntry;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Support\Facades\DB;
@@ -67,6 +68,8 @@ final class LinkStreamConsumer
         $entries = $this->read($maxRecords, $blockMs);
 
         if ($entries === []) {
+            $this->trimConfirmed();
+
             return 0;
         }
 
@@ -74,7 +77,10 @@ final class LinkStreamConsumer
 
         if ($acknowledged !== []) {
             $this->run(fn () => Redis::xack(self::STREAM, self::GROUP, $acknowledged));
+            $this->run(fn () => Redis::xdel(self::STREAM, $acknowledged));
         }
+
+        $this->trimConfirmed();
 
         return count($acknowledged);
     }
@@ -196,36 +202,19 @@ final class LinkStreamConsumer
      */
     private function rowFrom(array $fields): ?array
     {
-        $slug = $fields['slug'] ?? null;
-        $url = $fields['url'] ?? null;
+        $entry = LinkStreamEntry::fromFields($fields);
 
-        if (! is_string($slug) || preg_match('/^[0-9A-Za-z]{4,10}$/', $slug) !== 1) {
-            return null;
-        }
-
-        if (! is_string($url) || $url === '' || strlen($url) > 65535) {
-            return null;
-        }
-
-        $usuario = $fields['usuario'] ?? '';
-
-        if ($usuario !== '' && (! ctype_digit($usuario) || (int) $usuario < 1)) {
-            return null;
-        }
-
-        $exp = $fields['exp'] ?? null;
-
-        if ($exp !== null && (! ctype_digit($exp) || (int) $exp < 1)) {
+        if ($entry === null) {
             return null;
         }
 
         $now = CarbonImmutable::now();
 
         return [
-            'slug' => $slug,
-            'original_url' => $url,
-            'user_id' => $usuario === '' ? null : (int) $usuario,
-            'expires_at' => $exp === null ? null : CarbonImmutable::createFromTimestamp((int) $exp),
+            'slug' => $entry->slug,
+            'original_url' => $entry->url,
+            'user_id' => $entry->userId,
+            'expires_at' => $entry->expiresAt,
             'created_at' => $now,
             'updated_at' => $now,
         ];
@@ -306,6 +295,81 @@ final class LinkStreamConsumer
         }
 
         return $ids;
+    }
+
+    /**
+     * Remove do stream o que já está confirmado.
+     *
+     * Sem isto o stream acumularia todas as entradas desde sempre e a leitura
+     * de emergência encontraria links antigos antes de chegar ao MySQL. O limite
+     * seguro é o último id entregue quando não há pendentes; caso contrário, é o
+     * primeiro pendente, que não pode ser removido.
+     */
+    private function trimConfirmed(): void
+    {
+        $groups = $this->run(fn () => Redis::xinfo('GROUPS', self::STREAM));
+
+        if (! is_array($groups)) {
+            return;
+        }
+
+        $group = null;
+
+        foreach ($groups as $candidate) {
+            if (is_array($candidate) && ($candidate['name'] ?? null) === self::GROUP) {
+                $group = $candidate;
+
+                break;
+            }
+        }
+
+        if ($group === null) {
+            return;
+        }
+
+        $pending = $group['pending'] ?? null;
+        $lastDelivered = $group['last-delivered-id'] ?? null;
+
+        if (! is_int($pending) || ! is_string($lastDelivered) || $lastDelivered === '0-0') {
+            return;
+        }
+
+        if ($pending === 0) {
+            $threshold = $this->nextStreamId($lastDelivered);
+        } else {
+            $first = $this->run(
+                fn () => Redis::xpending(self::STREAM, self::GROUP, '-', '+', 1)
+            );
+
+            $threshold = is_array($first)
+                && isset($first[0])
+                && is_array($first[0])
+                && is_string($first[0][0] ?? null)
+                ? $first[0][0]
+                : null;
+        }
+
+        if ($threshold === null) {
+            return;
+        }
+
+        $this->run(fn () => Redis::xtrim(self::STREAM, $threshold, false, true));
+    }
+
+    private function nextStreamId(string $id): ?string
+    {
+        if (preg_match('/^(\d+)-(\d+)$/', $id, $parts) !== 1) {
+            return null;
+        }
+
+        $milliseconds = (int) $parts[1];
+        $sequence = (int) $parts[2];
+
+        if ($sequence >= PHP_INT_MAX) {
+            return sprintf('%d-0', $milliseconds + 1);
+        }
+
+        return sprintf('%d-%d', $milliseconds, $sequence + 1);
     }
 
     private function consumerName(): string
